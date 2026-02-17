@@ -1,0 +1,344 @@
+#include "WarehouseInstance.hpp"
+#include "WarehouseLoader.hpp"
+// #include "Model.hpp"
+// #include "Model2.hpp"
+#include "Heur_1.hpp"
+#include "Heur_2.hpp"
+#include "Heur_3.hpp"
+#include "Checker.hpp"
+#include <chrono>
+
+using namespace std;
+
+void check_coverage_pairs_never(int num_products, 
+                                const unordered_map<int, vector<int>>& product_pairs, 
+                                const vector<vector<int>>& never_used) {
+    vector<bool> seen(num_products, false);
+    int count = 0;
+
+    // 1. On marque les clés de product_pairs (les produits "sources" d'affinité)
+    for (auto const& [p_id, partners] : product_pairs) {
+        if (p_id >= 0 && p_id < num_products) {
+            if (!seen[p_id]) {
+                seen[p_id] = true;
+                count++;
+            }
+        }
+    }
+
+    // 2. On marque tous les produits dans never_used
+    for (const auto& circuit_vec : never_used) {
+        for (int p_id : circuit_vec) {
+            if (p_id >= 0 && p_id < num_products) {
+                if (!seen[p_id]) {
+                    seen[p_id] = true;
+                    count++;
+                }
+            }
+        }
+    }
+
+    // 3. Rapport
+    if (count == num_products) {
+        cout << "[OK] Tous les produits sont couverts par Pairs + NeverUsed." << endl;
+    } else {
+        cout << "[ALERTE] " << (num_products - count) << " produits sont manquants dans Pairs + NeverUsed !" << endl;
+        cout << "IDs manquants : ";
+        for (int i = 0; i < num_products; i++) {
+            if (!seen[i]) cout << i << " ";
+        }
+        cout << endl;
+    }
+}
+
+void check_freq_coverage(int num_products, const vector<vector<int>>& freq_products, const vector<vector<int>>& never_used) {
+    vector<bool> seen(num_products, false);
+    int count = 0;
+
+    for (const auto& circuit_vec : freq_products) {
+        for (int p_id : circuit_vec) {
+            if (p_id >= 0 && p_id < num_products) {
+                if (!seen[p_id]) {
+                    seen[p_id] = true;
+                    count++;
+                }
+            }
+        }
+    }
+
+    // 2. On marque tous les produits dans never_used
+    for (const auto& circuit_vec : never_used) {
+        for (int p_id : circuit_vec) {
+            if (p_id >= 0 && p_id < num_products) {
+                if (!seen[p_id]) {
+                    seen[p_id] = true;
+                    count++;
+                }
+            }
+        }
+    }
+
+    if (count == num_products) {
+        cout << "[OK] Tous les produits sont dans freq_products." << endl;
+    } else {
+        cout << "[INFO] freq_products contient " << count << "/" << num_products << " produits." << endl;
+        cout << "Produits non présents (souvent ceux de never_used) : ";
+        for (int i = 0; i < num_products; i++) {
+            if (!seen[i]) cout << i << " ";
+        }
+        cout << endl;
+    }
+}
+
+string build_solution_path(const string& warehouse_dir, const string& method_name) {
+    return warehouse_dir + "/solutions/rack_product_assignment_" + method_name + ".txt";
+}
+
+void write_and_check_solution(const WarehouseInstance& data,
+                              WarehouseSolution& sol,
+                              const string& warehouse_dir,
+                              const string& method_name) {
+    string sol_file = build_solution_path(warehouse_dir, method_name);
+
+    cout << "\n----------------------------------" << endl;
+    cout << "ECRITURE + CHECK : " << method_name << endl;
+    cout << "----------------------------------" << endl;
+
+    cout << "Écriture de : solution -> " << sol_file << endl;
+    sol.write(sol_file);
+
+    cout << "Test de : Checker" << endl;
+    Checker checker(data, sol_file);
+    bool check = checker.check();
+
+    if (check) {
+        cout << "[OK] Solution is valid" << endl;
+        cout << "COST : " << checker.calculateCost() << endl;
+    } else {
+        cout << "[ERREUR] Solution is not valid" << endl;
+    }
+}
+
+int main() {
+    srand(time(nullptr));
+
+    // Choix de l'instance
+    //const string INSTANCE_NAME = "warehouse_toy";
+    const string INSTANCE_NAME = "warehouse_big_market";
+    //const string INSTANCE_NAME = "warehouse_big_category";
+    //const string INSTANCE_NAME = "warehouse_big_family";
+
+    // Choix de la méthode
+    // bool test_M1 = false;
+    // bool test_M2 = false;
+    bool test_H1 = false;
+    bool test_H2 = false;
+    bool test_H3 = true;
+
+    const string WAREHOUSE_DIR = "warehouses/" + INSTANCE_NAME;
+    const string ANALYSE_DIR   = "analyse_data/";
+
+    // Fichiers analyse_data générés par ton script python
+    const string FILE_FREQ_PROD       = ANALYSE_DIR + "freq_prod_" + INSTANCE_NAME + ".txt";
+    const string FILE_FREQ_CIRCUIT    = ANALYSE_DIR + "freq_circuit_" + INSTANCE_NAME + ".txt";
+    const string FILE_CONCORD_PROD    = ANALYSE_DIR + "concord_prod_same_circuit_" + INSTANCE_NAME + ".txt";
+    const string FILE_CONCORD_CIRCUIT = ANALYSE_DIR + "concord_circuit_" + INSTANCE_NAME + ".txt";
+
+    // ---------------------------------------------------------------------
+    // LECTURE INSTANCE
+    // ---------------------------------------------------------------------
+    cout << "Lecture de : instance -> " << WAREHOUSE_DIR << endl;
+    WarehouseLoader loader(WAREHOUSE_DIR);
+    WarehouseInstance data = loader.loadAll();
+
+    // ---------------------------------------------------------------------
+    // LECTURE DONNEES D'ANALYSE
+    // ---------------------------------------------------------------------
+    cout << "Lecture de : product_pairs -> " << FILE_CONCORD_PROD << endl;
+    unordered_map<int, vector<int>> product_pairs =
+        read_product_pairs(FILE_CONCORD_PROD, data.num_products);
+
+    cout << "Lecture de : freq_products -> " << FILE_FREQ_PROD << endl;
+    vector<vector<int>> freq_products =
+        read_freq_prod(FILE_FREQ_PROD, data.num_circuits, data.product_circuit);
+
+    cout << "Lecture de : never_used -> " << FILE_FREQ_PROD << endl;
+    vector<vector<int>> never_used =
+        read_never_used_products(FILE_FREQ_PROD, data.num_circuits, data.num_products, data.product_circuit);
+
+    vector<int> frequency_circuits;
+    vector<int> freq_count;
+    cout << "Lecture de : frequency_circuits + counts -> " << FILE_FREQ_CIRCUIT << endl;
+    read_frequency_circuits_and_counts(FILE_FREQ_CIRCUIT, data.num_circuits, frequency_circuits, freq_count);
+
+    cout << "Lecture de : concordance circuits -> " << FILE_CONCORD_CIRCUIT << endl;
+    vector<vector<int>> concord = read_concordance_circuit(FILE_CONCORD_CIRCUIT);
+
+    cout << "Exécution de check_coverage_pairs_never " << endl;
+    check_coverage_pairs_never(data.num_products, product_pairs, never_used);
+
+    cout << "Exécution de check_freq_coverage " << endl;
+    check_freq_coverage(data.num_products, freq_products, never_used);
+
+    // ---------------------------------------------------------------------
+    // PREPARATION : ordre circuits + solution initiale
+    // ---------------------------------------------------------------------
+    cout << "Exécution de : build_circuit_order_by_concordance_fast_weighted" << endl;
+    vector<int> order_circuit =
+        build_circuit_order_by_concordance_fast_weighted(frequency_circuits, concord, freq_count);
+
+    cout << "Exécution de : initial_solution" << endl;
+    vector<int> sol_initial = initial_solution(data, frequency_circuits);
+
+    WarehouseSolution initial_sol(data, sol_initial);
+
+    // // ---------------------------------------------------------------------
+    // // TEST MODEL 1
+    // // ---------------------------------------------------------------------
+    // if (test_M1) {
+    //     cout << "\n==========================" << endl;
+    //     cout << "TEST MODEL 1" << endl;
+    //     cout << "==========================" << endl;
+
+    //     cout << "Exécution de : Model M1.solve()" << endl;
+    //     Model M1(data);
+
+    //     WarehouseSolution sol = M1.solve();
+
+    //     cout << "Affichage : solution Model 1" << endl;
+    //     sol.print();
+
+    //     cout << "Résultat : coût Model 1 = " << calculate_cost(sol) << endl;
+
+    //     write_and_check_solution(data, sol, WAREHOUSE_DIR, "M1");
+    // }
+
+    // // ---------------------------------------------------------------------
+    // // TEST MODEL 2
+    // // ---------------------------------------------------------------------
+    // if (test_M2) {
+    //     cout << "\n==========================" << endl;
+    //     cout << "TEST MODEL 2" << endl;
+    //     cout << "==========================" << endl;
+
+    //     cout << "Exécution de : génération circuit_sequence" << endl;
+    //     vector<int> circuit_sequence(data.num_circuits);
+    //     for (int f = 0; f < data.num_circuits; f++) {
+    //         circuit_sequence[f] = f;
+    //     }
+
+    //     cout << "Exécution de : Model2 M2.solve2()" << endl;
+    //     Model2 M2(data, 5, circuit_sequence);
+    //     WarehouseSolution sol2 = M2.solve2();
+
+    //     cout << "Résultat : coût Model 2 = " << calculate_cost(sol2) << endl;
+
+    //     write_and_check_solution(data, sol2, WAREHOUSE_DIR, "M2");
+
+    // }
+
+    // ---------------------------------------------------------------------
+    // TEST HEURISTIQUE 1
+    // ---------------------------------------------------------------------
+    if (test_H1) {
+        cout << "\n==========================" << endl;
+        cout << "TEST HEURISTIQUE 1" << endl;
+        cout << "==========================" << endl;
+
+        cout << "Exécution de : Heur_1(data, 3)" << endl;
+        WarehouseSolution sol = Heur_1(data, 3);
+
+        cout << "Résultat : coût H1 = " << calculate_cost(sol) << endl;
+
+        write_and_check_solution(data, sol, WAREHOUSE_DIR, "heur_1");
+    }
+
+    // ---------------------------------------------------------------------
+    // TEST HEURISTIQUE 3
+    // ---------------------------------------------------------------------
+
+    bool has_sol_H3 = false; // Necessaire à pour H2
+    WarehouseSolution sol_H3 = initial_sol;  // valeur par défaut
+
+    if (test_H3) {
+        cout << "\n==========================" << endl;
+        cout << "TEST HEURISTIQUE 3" << endl;
+        cout << "==========================" << endl;
+
+        cout << "Exécution de : initial_solution3 (H3)" << endl;
+        WarehouseSolution sol_for_h3(data, sol_initial);
+        Heuristic_3 H3(sol_for_h3);
+        H3.initial_solution3(order_circuit, freq_products, product_pairs, never_used);
+
+        cout << "Résultat : coût H3 initial = " << calculate_cost(H3.solution) << endl;
+
+        int max_iter_circuit = 20000;
+        int max_iter_without_improv = 1000;
+        cout << "Exécution de : H3.improve(" << max_iter_circuit << ", " << max_iter_without_improv << ")" << endl;
+        auto start_time = chrono::high_resolution_clock::now();
+        H3.improve3(max_iter_circuit, max_iter_without_improv);
+        auto end_time = chrono::high_resolution_clock::now();
+
+        auto duration = chrono::duration_cast<chrono::seconds>(end_time - start_time).count();
+        cout << "Temps d'exécution : " << duration << " secondes" << endl;
+
+        cout << "Résultat : coût après imrpove = " << calculate_cost(H3.solution) << endl;
+
+        write_and_check_solution(data, H3.solution, WAREHOUSE_DIR, "heur_3");
+
+        sol_H3 = H3.solution;
+        has_sol_H3 = true;
+
+    }
+
+    // ---------------------------------------------------------------------
+    // TEST HEURISTIQUE 2
+    // ---------------------------------------------------------------------
+    if (test_H2) {
+        cout << "\n==========================" << endl;
+        cout << "TEST HEURISTIQUE 2" << endl;
+        cout << "==========================" << endl;
+
+        // Tu choisis la base de départ
+        bool start_from_H3 = false;
+
+        WarehouseSolution base_solution = initial_sol;
+
+        if (start_from_H3 && has_sol_H3) {
+            cout << "[INFO] H2 démarre depuis la solution H3." << endl;
+            base_solution = sol_H3;
+        } else {
+            cout << "[INFO] H2 démarre depuis la solution initiale." << endl;
+        }
+
+        cout << "Exécution de : initialisation H2" << endl;
+        Heuristic_2 H2(base_solution);
+    
+        int max_iter_circuit = 50000;
+        int max_iter_without_improv = 10000;
+        cout << "Exécution de : H2.improve(" << max_iter_circuit << ", " << max_iter_without_improv << ")" << endl;
+        auto start_time = chrono::high_resolution_clock::now();
+        H2.improve(max_iter_circuit, max_iter_without_improv);
+        auto end_time = chrono::high_resolution_clock::now();
+
+        auto duration = chrono::duration_cast<chrono::seconds>(end_time - start_time).count();
+        cout << "Temps d'exécution : " << duration << " secondes" << endl;
+
+        cout << "Résultat : coût après H2 = " << H2.solution_cost << endl;
+    
+        write_and_check_solution(data, H2.solution, WAREHOUSE_DIR, "heur_2");
+    }
+
+
+    return 0;
+}
+
+
+// - Accepter les switch avec l'aération
+// - Prendre des couples de produits les plus frequemments ensemble pour faire les switch (et pour la solution initiale)
+// - Faire un liste Tabou qui interdit de faire des switch entre les produits d'un même couple pendant un certain nombre d'itérations 
+
+// - Faire un liste de produits ordonné par fréquence d'apparition dans toutes les commandes pour chaque produits.
+// - Pour placer les produits dans la sol initiale, à famille fixé, prendre le produit le plus fréquemment commandé (dans l'ensemble des commandes) et le placer. 
+//  Regarder ensuite les produits les plus frequemment commandé avec ce produit et les placer jusqu'à complétion de la capacité du rack.
+//  Stocker l'ensemble des produits qui ont déjà été placés. Placer dans le rack suivant le produit le plus fréquemment commandé suivant. S'il a déjà été placé, prendre le suivant et ainsi de suite.
