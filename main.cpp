@@ -7,6 +7,9 @@
 #include "Heur_3.hpp"
 #include "Checker.hpp"
 #include <chrono>
+#include <fstream>
+#include <iomanip>
+
 
 using namespace std;
 
@@ -119,20 +122,59 @@ void write_and_check_solution(const WarehouseInstance& data,
     }
 }
 
+string short_instance_name(const string& instance_name) {
+    if (instance_name == "warehouse_toy") return "toy";
+    if (instance_name == "warehouse_big_market") return "market";
+    if (instance_name == "warehouse_big_category") return "category";
+    if (instance_name == "warehouse_big_family") return "family";
+    return instance_name; // fallback
+}
+
+void write_method_report(const string& instance_short,
+                         const string& method_short,
+                         long long cost,
+                         long long time_seconds,
+                         const bool aer_switch = false
+                        ) 
+{
+    // nom fichier : H3_market.txt par exemple
+    string filename = method_short + "_" + instance_short + ".txt";
+
+    ofstream out(filename);
+    if (!out.is_open()) {
+        cerr << "[ERREUR] Impossible d'écrire le fichier : " << filename << endl;
+        return;
+    }
+    if(method_short == "H3") {
+        out << "Instance Methode Cout Temps Aer_switch\n";
+        out << instance_short << " " << method_short << " " << cost << " " << time_seconds << " " << aer_switch << "\n";
+    }
+    else{
+        out << "Instance Methode Cout Temps\n";
+        out << instance_short << " " << method_short << " " << cost << " " << time_seconds << "\n";
+    }
+
+    out.close();
+    cout << "[INFO] Résultats écrits dans : " << filename << endl;
+}
+
+
 int main() {
     srand(time(nullptr));
 
     // Choix de l'instance
     //const string INSTANCE_NAME = "warehouse_toy";
-    const string INSTANCE_NAME = "warehouse_big_market";
+    //const string INSTANCE_NAME = "warehouse_big_market";
     //const string INSTANCE_NAME = "warehouse_big_category";
-    //const string INSTANCE_NAME = "warehouse_big_family";
+    const string INSTANCE_NAME = "warehouse_big_family";
+
+    const string INSTANCE_SHORT = short_instance_name(INSTANCE_NAME);
 
     // Choix de la méthode
     // bool test_M1 = false;
     // bool test_M2 = false;
     bool test_H1 = false;
-    bool test_H2 = false;
+    bool test_H2 = true;
     bool test_H3 = true;
 
     const string WAREHOUSE_DIR = "warehouses/" + INSTANCE_NAME;
@@ -211,6 +253,8 @@ int main() {
     //     cout << "Résultat : coût Model 1 = " << calculate_cost(sol) << endl;
 
     //     write_and_check_solution(data, sol, WAREHOUSE_DIR, "M1");
+    //     write_method_report(INSTANCE_SHORT, "M1", cost, duration);
+
     // }
 
     // // ---------------------------------------------------------------------
@@ -234,6 +278,8 @@ int main() {
     //     cout << "Résultat : coût Model 2 = " << calculate_cost(sol2) << endl;
 
     //     write_and_check_solution(data, sol2, WAREHOUSE_DIR, "M2");
+    //     write_method_report(INSTANCE_SHORT, "M1", cost, duration);
+
 
     // }
 
@@ -241,16 +287,22 @@ int main() {
     // TEST HEURISTIQUE 1
     // ---------------------------------------------------------------------
     if (test_H1) {
-        cout << "\n==========================" << endl;
-        cout << "TEST HEURISTIQUE 1" << endl;
-        cout << "==========================" << endl;
-
         cout << "Exécution de : Heur_1(data, 3)" << endl;
-        WarehouseSolution sol = Heur_1(data, 3);
 
-        cout << "Résultat : coût H1 = " << calculate_cost(sol) << endl;
+        auto start_time = chrono::high_resolution_clock::now();
+        WarehouseSolution sol = Heur_1(data, 3);
+        auto end_time = chrono::high_resolution_clock::now();
+
+        auto duration = chrono::duration_cast<chrono::seconds>(end_time - start_time).count();
+
+        long long cost = calculate_cost(sol);
+        cout << "Résultat : coût H1 = " << cost << endl;
+        cout << "Temps d'exécution : " << duration << " secondes" << endl;
 
         write_and_check_solution(data, sol, WAREHOUSE_DIR, "heur_1");
+
+        // écriture fichier
+        write_method_report(INSTANCE_SHORT, "H1", cost, duration);
     }
 
     // ---------------------------------------------------------------------
@@ -270,25 +322,29 @@ int main() {
         Heuristic_3 H3(sol_for_h3);
         H3.initial_solution3(order_circuit, freq_products, product_pairs, never_used);
 
-        cout << "Résultat : coût H3 initial = " << calculate_cost(H3.solution) << endl;
+        sol_H3 = H3.solution;
+        has_sol_H3 = true;
 
-        int max_iter_circuit = 20000;
-        int max_iter_without_improv = 1000;
+        long long cost = calculate_cost(H3.solution);
+        cout << "Résultat : coût avant imrpove = " << cost << endl;
+
+        int max_iter_circuit = 50000;
+        int max_iter_without_improv = 100;
+        bool allow_aeration_switch = false;
         cout << "Exécution de : H3.improve(" << max_iter_circuit << ", " << max_iter_without_improv << ")" << endl;
         auto start_time = chrono::high_resolution_clock::now();
-        H3.improve3(max_iter_circuit, max_iter_without_improv);
+        H3.improve3(max_iter_circuit, max_iter_without_improv, allow_aeration_switch);
         auto end_time = chrono::high_resolution_clock::now();
 
         auto duration = chrono::duration_cast<chrono::seconds>(end_time - start_time).count();
         cout << "Temps d'exécution : " << duration << " secondes" << endl;
 
-        cout << "Résultat : coût après imrpove = " << calculate_cost(H3.solution) << endl;
+        int cost_2 = calculate_cost(H3.solution);
+        cout << "Résultat : coût avaprès improve = " << cost_2 << endl;
 
         write_and_check_solution(data, H3.solution, WAREHOUSE_DIR, "heur_3");
 
-        sol_H3 = H3.solution;
-        has_sol_H3 = true;
-
+        write_method_report(INSTANCE_SHORT, "H3", cost_2, duration, allow_aeration_switch);
     }
 
     // ---------------------------------------------------------------------
@@ -300,7 +356,7 @@ int main() {
         cout << "==========================" << endl;
 
         // Tu choisis la base de départ
-        bool start_from_H3 = false;
+        bool start_from_H3 = true;
 
         WarehouseSolution base_solution = initial_sol;
 
@@ -315,7 +371,7 @@ int main() {
         Heuristic_2 H2(base_solution);
     
         int max_iter_circuit = 50000;
-        int max_iter_without_improv = 10000;
+        int max_iter_without_improv = 1000;
         cout << "Exécution de : H2.improve(" << max_iter_circuit << ", " << max_iter_without_improv << ")" << endl;
         auto start_time = chrono::high_resolution_clock::now();
         H2.improve(max_iter_circuit, max_iter_without_improv);
@@ -327,6 +383,8 @@ int main() {
         cout << "Résultat : coût après H2 = " << H2.solution_cost << endl;
     
         write_and_check_solution(data, H2.solution, WAREHOUSE_DIR, "heur_2");
+
+        write_method_report(INSTANCE_SHORT, "H2", H2.solution_cost, duration);
     }
 
 
